@@ -1,0 +1,32 @@
+name: Set up Linux environment
+description: Set up everything needed to build Frida on Linux
+inputs:
+  github-token:
+    required: true
+    description: GitHub token for accessing private repositories
+runs:
+  using: composite
+  steps:
+    - name: Configure git
+      run: |
+        git config --global user.name "Frida Developers"
+        git config --global user.email "oleavr@frida.re"
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+      shell: bash
+    - name: Configure git credentials for private repos
+      run: |
+        git config --global url."https://x-access-token:${{ inputs.github-token }}@github.com/".insteadOf "https://github.com/"
+      shell: bash
+    - name: Check out releng
+      run: |
+        git submodule update --init --depth 1 releng
+        cd releng
+        git submodule update --init --depth 1
+      shell: bash
+    - name: Add convenience environment variables
+      run: |
+        (
+          echo "FRIDA_PREFIX=$RUNNER_WORKSPACE/dist"
+          echo "FRIDA_VERSION=$(releng/frida_version.py)"
+        ) >> $GITHUB_ENV
+      shell: bash

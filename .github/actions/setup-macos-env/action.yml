@@ -1,0 +1,38 @@
+name: Set up macOS environment
+description: Set up everything needed to build Frida on macOS
+inputs:
+  github-token:
+    required: true
+    description: GitHub token for accessing private repositories
+runs:
+  using: composite
+  steps:
+    - name: Configure git
+      run: |
+        git config --global user.name "Frida Developers"
+        git config --global user.email "oleavr@frida.re"
+      shell: bash
+    - name: Configure git credentials for private repos
+      run: |
+        git config --global url."https://x-access-token:${{ inputs.github-token }}@github.com/".insteadOf "https://github.com/"
+      shell: bash
+    - name: Check out releng
+      run: |
+        git submodule update --init --depth 1 releng
+        cd releng
+        git submodule update --init --depth 1
+      shell: bash
+    - name: Add convenience environment variables
+      run: |
+        (
+          echo "FRIDA_PREFIX=$RUNNER_WORKSPACE/dist"
+          echo "FRIDA_VERSION=$(releng/frida_version.py)"
+        ) >> $GITHUB_ENV
+      shell: bash
+    - name: Install Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install setuptools
+      run: pip install setuptools
+      shell: bash

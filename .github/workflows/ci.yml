@@ -1,0 +1,410 @@
+name: CI
+
+on:
+  push:
+    tags:
+      - '*'
+
+env:
+  ANDROID_NDK_VERSION: r25b
+
+jobs:
+  frida-windows:
+    needs: sdk-windows
+    strategy:
+      matrix:
+        arch: [x86, x86_64]
+      fail-fast: false
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          fetch-depth: 0
+      - name: Set up environment
+        uses: ./.github/actions/setup-windows-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          architecture: ${{ matrix.arch == 'x86_64' && 'x64' || matrix.arch }}
+      - name: Configure
+        run: >-
+          .\configure
+          --prefix=$Env:FRIDA_PREFIX
+          --host=windows-${{ matrix.arch }}
+          --enable-gadget
+          --enable-server
+          --enable-portal
+          --enable-inject
+      - name: Compile
+        run: .\make
+      - name: Install
+        run: .\make install
+      - name: Compress artifacts (Windows, xz)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $destDir = "$Env:GITHUB_WORKSPACE\build\upload"
+          New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+          & 7z a -txz "$destDir\frida-server-windows-${{ matrix.arch }}.exe.xz" "$Env:FRIDA_PREFIX\bin\frida-server.exe"
+          & 7z a -txz "$destDir\frida-portal-windows-${{ matrix.arch }}.exe.xz" "$Env:FRIDA_PREFIX\bin\frida-portal.exe"
+          & 7z a -txz "$destDir\frida-inject-windows-${{ matrix.arch }}.exe.xz" "$Env:FRIDA_PREFIX\bin\frida-inject.exe"
+          if ("${{ matrix.arch }}" -match '64') {
+            $gadgetPath = "$Env:FRIDA_PREFIX\lib\frida\64\frida-gadget.dll"
+          } else {
+            $gadgetPath = "$Env:FRIDA_PREFIX\lib\frida\32\frida-gadget.dll"
+          }
+          & 7z a -txz "$destDir\frida-gadget-windows-${{ matrix.arch }}.dll.xz" $gadgetPath
+          # 新增：压缩 frida-inject DLL（带版本号）
+          # 根据日志，实际文件名是 frida-inject-1.dll
+          $injectDllPath = "$Env:FRIDA_PREFIX\lib\frida\frida-inject-1.dll"
+          if (Test-Path $injectDllPath) {
+            Write-Host "✓ Found frida-inject-1.dll, compressing..."
+            & 7z a -txz "$destDir\libfrida-inject-windows-${{ matrix.arch }}.dll.xz" $injectDllPath
+          } else {
+            # 如果找不到，尝试查找任何匹配的 DLL
+            Write-Host "Searching for frida-inject DLL..."
+            $foundDll = Get-ChildItem "$Env:FRIDA_PREFIX\lib\frida\frida-inject*.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($foundDll) {
+              Write-Host "✓ Found $($foundDll.Name), compressing..."
+              & 7z a -txz "$destDir\libfrida-inject-windows-${{ matrix.arch }}.dll.xz" $foundDll.FullName
+            } else {
+              Write-Host "⚠ Warning: No frida-inject DLL found"
+              Write-Host "Directory contents:"
+              Get-ChildItem "$Env:FRIDA_PREFIX\lib\frida\" -ErrorAction SilentlyContinue
+            }
+          }
+        shell: pwsh
+      - name: Upload to Cloudflare R2 (Windows)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ryand56/r2-upload-action@v1.4
+        with:
+          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ secrets.R2_BUCKET }}
+          source-dir: build/upload
+          destination-dir: ${{ github.ref_name }}/
+          output-file-url: true
+
+
+
+  frida-linux:
+    needs: sdk-linux
+    strategy:
+      matrix:
+        arch: [x86, x86_64, armhf, arm64]
+      fail-fast: false
+    runs-on: ubuntu-latest
+    container: ghcr.io/frida/x-tools-linux-${{ matrix.arch }}:latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Configure qemu-user
+        if: ${{ !startsWith(matrix.arch, 'x86') }}
+        run: echo "FRIDA_QEMU_SYSROOT=/opt/x-tools/$XTOOLS_HOST/$XTOOLS_HOST/sysroot" >> $GITHUB_ENV
+      - name: Configure
+        run: >-
+          ./configure
+          "--prefix=$FRIDA_PREFIX"
+          --host=$XTOOLS_HOST
+          --enable-gadget
+          --enable-server
+          --enable-portal
+          --enable-inject
+          --
+          -Dlibdir=lib
+      - name: Compile
+        run: make
+      - name: Install
+        run: make install
+      - name: Compress artifacts (Linux, xz)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if ! command -v xz >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y xz-utils;
+            elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y xz;
+            elif command -v yum >/dev/null 2>&1; then sudo yum install -y xz;
+            elif command -v apk >/dev/null 2>&1; then sudo apk add --no-cache xz;
+            elif command -v pacman >/dev/null 2>&1; then sudo pacman -Sy --noconfirm xz;
+            else echo "xz not found and no known package manager available" >&2; exit 1; fi
+          fi
+          set -euo pipefail
+          destDir="$GITHUB_WORKSPACE/build/upload"
+          mkdir -p "$destDir"
+          xz -c -T 0 "$FRIDA_PREFIX/bin/frida-server" > "$destDir/frida-server-linux-${{ matrix.arch }}.xz"
+          xz -c -T 0 "$FRIDA_PREFIX/bin/frida-portal" > "$destDir/frida-portal-linux-${{ matrix.arch }}.xz"
+          xz -c -T 0 "$FRIDA_PREFIX/bin/frida-inject" > "$destDir/frida-inject-linux-${{ matrix.arch }}.xz"
+          if [[ "${{ matrix.arch }}" == *"64"* ]]; then
+            gadgetPath="$FRIDA_PREFIX/lib/frida/64/frida-gadget.so"
+          else
+            gadgetPath="$FRIDA_PREFIX/lib/frida/32/frida-gadget.so"
+          fi
+          xz -c -T 0 "$gadgetPath" > "$destDir/frida-gadget-linux-${{ matrix.arch }}.so.xz"
+          # 新增：压缩 libfrida-inject.so
+          if [ -f "$FRIDA_PREFIX/lib/frida/libfrida-inject.so" ]; then
+            echo "✓ Found libfrida-inject.so, compressing..."
+            xz -c -T 0 "$FRIDA_PREFIX/lib/frida/libfrida-inject.so" > "$destDir/libfrida-inject-linux-${{ matrix.arch }}.so.xz"
+          else
+            echo "⚠ Warning: libfrida-inject.so not found, skipping"
+            echo "Directory contents:"
+            ls -la "$FRIDA_PREFIX/lib/frida/" || true
+          fi
+        shell: bash
+      - name: Upload to Cloudflare R2 (Linux)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ryand56/r2-upload-action@v1.4
+        with:
+          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ secrets.R2_BUCKET }}
+          source-dir: build/upload
+          destination-dir: ${{ github.ref_name }}/
+          output-file-url: true
+
+  frida-android:
+    needs: [sdk-linux, sdk-android-32, sdk-android-64]
+    strategy:
+      matrix:
+        arch: [x86, x86_64, arm, arm64]
+      fail-fast: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Set up NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+          add-to-path: false
+      - name: Add ANDROID_NDK_ROOT to environment
+        run: echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+      - name: Configure
+        run: >-
+          ./configure
+          "--prefix=$FRIDA_PREFIX"
+          --host=android-${{ matrix.arch }}
+          --enable-portal
+      - name: Compile
+        run: make
+      - name: Install
+        run: make install
+      - name: Compress artifacts (Android, xz)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if ! command -v xz >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y xz-utils;
+            elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y xz;
+            elif command -v yum >/dev/null 2>&1; then sudo yum install -y xz;
+            elif command -v apk >/dev/null 2>&1; then sudo apk add --no-cache xz;
+            elif command -v pacman >/dev/null 2>&1; then sudo pacman -Sy --noconfirm xz;
+            else echo "xz not found and no known package manager available" >&2; exit 1; fi
+          fi
+          set -euo pipefail
+          destDir="$GITHUB_WORKSPACE/build/upload"
+          mkdir -p "$destDir"
+          xz -c -T 0 "$FRIDA_PREFIX/bin/frida-server" > "$destDir/frida-server-android-${{ matrix.arch }}.xz"
+          xz -c -T 0 "$FRIDA_PREFIX/bin/frida-portal" > "$destDir/frida-portal-android-${{ matrix.arch }}.xz"
+          xz -c -T 0 "$FRIDA_PREFIX/bin/frida-inject" > "$destDir/frida-inject-android-${{ matrix.arch }}.xz"
+          if [[ "${{ matrix.arch }}" == *"64"* ]]; then
+            gadgetPath="$FRIDA_PREFIX/lib/frida/64/frida-gadget.so"
+          else
+            gadgetPath="$FRIDA_PREFIX/lib/frida/32/frida-gadget.so"
+          fi
+          xz -c -T 0 "$gadgetPath" > "$destDir/frida-gadget-android-${{ matrix.arch }}.so.xz"
+          if [ -f "$FRIDA_PREFIX/lib/frida/libfrida-inject.so" ]; then
+            echo "Found libfrida-inject.so, compressing..."
+            xz -c -T 0 "$FRIDA_PREFIX/lib/frida/libfrida-inject.so" > "$destDir/libfrida-inject-android-${{ matrix.arch }}.so.xz"
+          else
+            echo "Warning: libfrida-inject.so not found"
+          fi
+      - name: Upload to Cloudflare R2 (Android)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ryand56/r2-upload-action@v1.4
+        with:
+          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ secrets.R2_BUCKET }}
+          source-dir: build/upload
+          destination-dir: ${{ github.ref_name }}/
+          output-file-url: true
+
+  toolchain-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-windows-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Roll toolchain
+        run: python releng\deps.py roll toolchain windows-x86
+
+  sdk-windows:
+    needs: toolchain-windows
+    strategy:
+      matrix:
+        arch: [x86, x86_64]
+      fail-fast: false
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-windows-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Roll SDK
+        run: python releng\deps.py roll sdk windows-${{ matrix.arch }}-md --activate
+
+
+
+
+
+  toolchain-linux:
+    strategy:
+      matrix:
+        arch: [x86, x86_64, armhf, arm64]
+      fail-fast: false
+    runs-on: ubuntu-latest
+    container: ghcr.io/frida/x-tools-linux-${{ matrix.arch }}:latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Roll toolchain
+        run: releng/deps.py roll toolchain $XTOOLS_HOST
+
+  sdk-linux:
+    needs: toolchain-linux
+    strategy:
+      matrix:
+        arch: [x86, x86_64, armhf, arm64]
+      fail-fast: false
+    runs-on: ubuntu-latest
+    container: ghcr.io/frida/x-tools-linux-${{ matrix.arch }}:latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Set FRIDA_CAN_RUN_HOST_BINARIES
+        if: ${{ matrix.arch == 'x86' }}
+        run: echo "FRIDA_CAN_RUN_HOST_BINARIES=yes" >> $GITHUB_ENV
+      - name: Configure qemu-user
+        if: ${{ !startsWith(matrix.arch, 'x86') }}
+        run: echo "FRIDA_QEMU_SYSROOT=/opt/x-tools/$XTOOLS_HOST/$XTOOLS_HOST/sysroot" >> $GITHUB_ENV
+      - name: Roll SDK
+        run: releng/deps.py roll sdk $XTOOLS_HOST --activate
+
+  sdk-android-32:
+    needs: toolchain-linux
+    strategy:
+      matrix:
+        arch: [x86, arm]
+      fail-fast: false
+    runs-on: ubuntu-latest
+    container: ghcr.io/frida/x-tools-linux-x86:latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Set up NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+          add-to-path: false
+      - name: Roll SDK
+        run: releng/deps.py roll sdk android-${{ matrix.arch }} --build=$XTOOLS_HOST --activate
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+  sdk-android-64:
+    needs: toolchain-linux
+    strategy:
+      matrix:
+        arch: [x86_64, arm64]
+      fail-fast: false
+    runs-on: ubuntu-latest
+    container: ghcr.io/frida/x-tools-linux-x86_64:latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Set up NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+          add-to-path: false
+      - name: Roll SDK
+        run: releng/deps.py roll sdk android-${{ matrix.arch }} --build=$XTOOLS_HOST --activate
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
