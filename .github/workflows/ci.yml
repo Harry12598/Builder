@@ -24,6 +24,7 @@ jobs:
           ref: main
           fetch-depth: 0
           token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
       - name: Set up environment
         uses: ./.github/actions/setup-windows-env
         with:
@@ -107,6 +108,7 @@ jobs:
           ref: main
           fetch-depth: 0
           token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
       - name: Set up environment
         uses: ./.github/actions/setup-linux-env
         with:
@@ -189,6 +191,7 @@ jobs:
           ref: main
           fetch-depth: 0
           token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
       - name: Set up environment
         uses: ./.github/actions/setup-linux-env
         with:
@@ -261,6 +264,7 @@ jobs:
           repository: Harry12598/MyFrida
           ref: main
           token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
       - name: Set up environment
         uses: ./.github/actions/setup-windows-env
         with:
@@ -282,6 +286,7 @@ jobs:
           repository: Harry12598/MyFrida
           ref: main
           token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
       - name: Set up environment
         uses: ./.github/actions/setup-windows-env
         with:
@@ -307,6 +312,7 @@ jobs:
           repository: Harry12598/MyFrida
           ref: main
           token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
       - name: Set up environment
         uses: ./.github/actions/setup-linux-env
         with:
@@ -329,6 +335,7 @@ jobs:
           repository: Harry12598/MyFrida
           ref: main
           token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
       - name: Set up environment
         uses: ./.github/actions/setup-linux-env
         with:
@@ -357,6 +364,7 @@ jobs:
           repository: Harry12598/MyFrida
           ref: main
           token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
       - name: Set up environment
         uses: ./.github/actions/setup-linux-env
         with:
@@ -387,6 +395,7 @@ jobs:
           repository: Harry12598/MyFrida
           ref: main
           token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
       - name: Set up environment
         uses: ./.github/actions/setup-linux-env
         with:
