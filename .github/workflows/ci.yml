@@ -135,7 +135,7 @@ jobs:
       fail-fast: false
     runs-on: ubuntu-latest
     container:
-      image: ${{ env.XTOOLS_REGISTRY }}/x-tools-linux-${{ matrix.arch }}:${{ env.XTOOLS_TAG }}
+      image: ghcr.io/harry12598/x-tools-linux-${{ matrix.arch }}:16.6
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.MY_GITHUB_REPO_TOKEN_PRIVATE }}
@@ -345,7 +345,7 @@ jobs:
       fail-fast: false
     runs-on: ubuntu-latest
     container:
-      image: ${{ env.XTOOLS_REGISTRY }}/x-tools-linux-${{ matrix.arch }}:${{ env.XTOOLS_TAG }}
+      image: ghcr.io/harry12598/x-tools-linux-${{ matrix.arch }}:16.6
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.MY_GITHUB_REPO_TOKEN_PRIVATE }}
@@ -372,7 +372,7 @@ jobs:
       fail-fast: false
     runs-on: ubuntu-latest
     container:
-      image: ${{ env.XTOOLS_REGISTRY }}/x-tools-linux-${{ matrix.arch }}:${{ env.XTOOLS_TAG }}
+      image: ghcr.io/harry12598/x-tools-linux-${{ matrix.arch }}:16.6
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.MY_GITHUB_REPO_TOKEN_PRIVATE }}
@@ -405,7 +405,7 @@ jobs:
       fail-fast: false
     runs-on: ubuntu-latest
     container:
-      image: ${{ env.XTOOLS_REGISTRY }}/x-tools-linux-x86:${{ env.XTOOLS_TAG }}
+      image: ghcr.io/harry12598/x-tools-linux-x86:16.6
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.MY_GITHUB_REPO_TOKEN_PRIVATE }}
@@ -440,7 +440,7 @@ jobs:
       fail-fast: false
     runs-on: ubuntu-latest
     container:
-      image: ${{ env.XTOOLS_REGISTRY }}/x-tools-linux-x86_64:${{ env.XTOOLS_TAG }}
+      image: ghcr.io/harry12598/x-tools-linux-x86_64:16.6
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.MY_GITHUB_REPO_TOKEN_PRIVATE }}
