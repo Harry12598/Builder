@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - '*'
+      - '!linux-amd64-*'
+      - '!linux-x86_64-*'
   workflow_dispatch:
     inputs:
       target:
