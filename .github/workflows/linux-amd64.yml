@@ -1,0 +1,169 @@
+name: Linux amd64
+
+# 只编 Linux x86_64（产物名仍是 frida-*-linux-x86_64），源码取 MyFrida main。
+# Actions → Linux amd64 → Run workflow
+# 或打标签 linux-amd64-* / linux-x86_64-*
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'linux-amd64-*'
+      - 'linux-x86_64-*'
+
+env:
+  XTOOLS_REGISTRY: ghcr.io/harry12598
+  XTOOLS_TAG: "16.6"
+
+jobs:
+  x-tools-mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.MY_GITHUB_REPO_TOKEN_PRIVATE }}
+      - name: Mirror official x-tools image if our fork is missing
+        env:
+          ARCH: x86_64
+        run: |
+          set -euo pipefail
+          src="ghcr.io/frida/x-tools-linux-${ARCH}:latest"
+          dst="${XTOOLS_REGISTRY}/x-tools-linux-${ARCH}:${XTOOLS_TAG}"
+          echo "Checking fork image: $dst"
+          if docker manifest inspect "$dst" >/dev/null 2>&1; then
+            echo "Already exists, skip pull/retag/push"
+            exit 0
+          fi
+          echo "Missing, copying $src -> $dst"
+          docker pull "$src"
+          docker tag "$src" "$dst"
+          docker push "$dst"
+
+  toolchain-linux:
+    needs: x-tools-mirror
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/harry12598/x-tools-linux-x86_64:16.6
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.MY_GITHUB_REPO_TOKEN_PRIVATE }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Roll toolchain
+        run: releng/deps.py roll toolchain $XTOOLS_HOST
+
+  sdk-linux:
+    needs: toolchain-linux
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/harry12598/x-tools-linux-x86_64:16.6
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.MY_GITHUB_REPO_TOKEN_PRIVATE }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Roll SDK
+        run: releng/deps.py roll sdk $XTOOLS_HOST --activate
+
+  frida-linux:
+    needs: sdk-linux
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/harry12598/x-tools-linux-x86_64:16.6
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.MY_GITHUB_REPO_TOKEN_PRIVATE }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          repository: Harry12598/MyFrida
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+          submodules: recursive
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          github-token: ${{ secrets.MY_GITHUB_TOKEN_PRIVATE }}
+      - name: Configure
+        run: >-
+          ./configure
+          "--prefix=$FRIDA_PREFIX"
+          --host=$XTOOLS_HOST
+          --enable-gadget
+          --enable-server
+          --enable-portal
+          --enable-inject
+          --
+          -Dlibdir=lib
+      - name: Compile
+        run: make
+      - name: Install
+        run: make install
+      - name: Compress artifacts (Linux, xz)
+        run: |
+          if ! command -v xz >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y xz-utils;
+            elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y xz;
+            elif command -v yum >/dev/null 2>&1; then sudo yum install -y xz;
+            elif command -v apk >/dev/null 2>&1; then sudo apk add --no-cache xz;
+            elif command -v pacman >/dev/null 2>&1; then sudo pacman -Sy --noconfirm xz;
+            else echo "xz not found and no known package manager available" >&2; exit 1; fi
+          fi
+          set -euo pipefail
+          destDir="$GITHUB_WORKSPACE/build/upload"
+          mkdir -p "$destDir"
+          xz -c -T 0 "$FRIDA_PREFIX/bin/frida-server" > "$destDir/frida-server-linux-x86_64.xz"
+          xz -c -T 0 "$FRIDA_PREFIX/bin/frida-portal" > "$destDir/frida-portal-linux-x86_64.xz"
+          xz -c -T 0 "$FRIDA_PREFIX/bin/frida-inject" > "$destDir/frida-inject-linux-x86_64.xz"
+          gadgetPath="$FRIDA_PREFIX/lib/frida/64/frida-gadget.so"
+          xz -c -T 0 "$gadgetPath" > "$destDir/frida-gadget-linux-x86_64.so.xz"
+          if [ -f "$FRIDA_PREFIX/lib/frida/libfrida-inject.so" ]; then
+            echo "Found libfrida-inject.so, compressing..."
+            xz -c -T 0 "$FRIDA_PREFIX/lib/frida/libfrida-inject.so" > "$destDir/libfrida-inject-linux-x86_64.so.xz"
+          else
+            echo "Warning: libfrida-inject.so not found, skipping"
+            ls -la "$FRIDA_PREFIX/lib/frida/" || true
+          fi
+        shell: bash
+      - name: Upload Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-linux-x86_64
+          path: build/upload/*
+      - name: Upload to Cloudflare R2
+        uses: ryand56/r2-upload-action@v1.4
+        with:
+          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ secrets.R2_BUCKET }}
+          source-dir: build/upload
+          destination-dir: ${{ github.event_name == 'workflow_dispatch' && format('linux-amd64-{0}/', github.run_number) || format('{0}/', github.ref_name) }}
+          output-file-url: true
